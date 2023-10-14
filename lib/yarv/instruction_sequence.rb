@@ -880,6 +880,10 @@ module YARV
       push(Legacy::OptGetInlineCache.new(label, cache))
     end
 
+    def opt_reverse(number)
+      push(OptReverse.new(number))
+    end
+
     def opt_setinlinecache(cache)
       push(Legacy::OptSetInlineCache.new(cache))
     end
@@ -1089,17 +1093,14 @@ module YARV
           iseq.dupn(opnds[0])
         when :expandarray
           iseq.expandarray(opnds[0], opnds[1])
-        when :getblockparam, :getblockparamproxy, :getlocal, :getlocal_WC_0,
-              :getlocal_WC_1, :setblockparam, :setlocal, :setlocal_WC_0,
-              :setlocal_WC_1
+        when :getblockparam, :getblockparamproxy, :getlocal, :getlocal_WC_0, :getlocal_WC_1, :setblockparam, :setlocal, :setlocal_WC_0, :setlocal_WC_1
           current = iseq
           level = 0
 
           case type
           when :getlocal_WC_1, :setlocal_WC_1
             level = 1
-          when :getblockparam, :getblockparamproxy, :getlocal, :setblockparam,
-                :setlocal
+          when :getblockparam, :getblockparamproxy, :getlocal, :setblockparam, :setlocal
             level = opnds[1]
           end
 
@@ -1153,22 +1154,14 @@ module YARV
           iseq.objtostring(CallData.from(opnds[0]))
         when :once
           iseq.once(from(opnds[0], options, iseq), opnds[1])
-        when :opt_and, :opt_aref, :opt_aset, :opt_div, :opt_empty_p, :opt_eq,
-              :opt_ge, :opt_gt, :opt_le, :opt_length, :opt_lt, :opt_ltlt,
-              :opt_minus, :opt_mod, :opt_mult, :opt_nil_p, :opt_not, :opt_or,
-              :opt_plus, :opt_regexpmatch2, :opt_send_without_block, :opt_size,
-              :opt_succ
+        when :opt_and, :opt_aref, :opt_aset, :opt_div, :opt_empty_p, :opt_eq, :opt_ge, :opt_gt, :opt_le, :opt_length, :opt_lt, :opt_ltlt, :opt_minus, :opt_mod, :opt_mult, :opt_nil_p, :opt_not, :opt_or, :opt_plus, :opt_regexpmatch2, :opt_send_without_block, :opt_size, :opt_succ
           iseq.send(CallData.from(opnds[0]), nil)
         when :opt_aref_with
           iseq.opt_aref_with(opnds[0], CallData.from(opnds[1]))
         when :opt_aset_with
           iseq.opt_aset_with(opnds[0], CallData.from(opnds[1]))
         when :opt_case_dispatch
-          hash =
-            opnds[0]
-              .each_slice(2)
-              .to_h
-              .transform_values { |value| labels[value] }
+          hash = opnds[0].each_slice(2).to_h.transform_values { |value| labels[value] }
           iseq.opt_case_dispatch(hash, labels[opnds[1]])
         when :opt_getconstant_path
           iseq.opt_getconstant_path(opnds[0])
@@ -1184,9 +1177,9 @@ module YARV
           iseq.newarray(opnds[0])
           iseq.send(CallData.new(opnds[1]))
         when :opt_neq
-          iseq.push(
-            OptNEq.new(CallData.from(opnds[0]), CallData.from(opnds[1]))
-          )
+          iseq.push(OptNEq.new(CallData.from(opnds[0]), CallData.from(opnds[1])))
+        when :opt_reverse
+          iseq.opt_reverse(opnds[0])
         when :opt_setinlinecache
           iseq.opt_setinlinecache(opnds[0])
         when :opt_str_freeze

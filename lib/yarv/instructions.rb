@@ -4157,6 +4157,60 @@ module YARV
 
   # ### Summary
   #
+  # `opt_reverse` is an optimization that the peephole optimizer performs to
+  # reverse a variable number of elements on the top of the stack.
+  #
+  # ### Usage
+  #
+  # ~~~ruby
+  # a.a, b.b, c.c = d, e; nil
+  # ~~~
+  class OptReverse < Instruction
+    attr_reader :number
+
+    def initialize(number)
+      @number = number
+    end
+
+    def disasm(fmt)
+      fmt.instruction("opt_reverse", [fmt.object(number)])
+    end
+
+    def to_a(_iseq)
+      [:opt_reverse, number]
+    end
+
+    def deconstruct_keys(_keys)
+      { number: number }
+    end
+
+    def ==(other)
+      other.is_a?(OptReverse) && other.number == number
+    end
+
+    def length
+      2
+    end
+
+    def pops
+      number
+    end
+
+    def pushes
+      number
+    end
+
+    def canonical
+      self
+    end
+
+    def call(vm)
+      vm.push(*vm.pop(number).reverse)
+    end
+  end
+
+  # ### Summary
+  #
   # `opt_send_without_block` is a specialization of the send instruction that
   # occurs when a method is being called without a block. It pops the receiver
   # and the arguments off the stack and pushes on the result.
@@ -4880,9 +4934,7 @@ module YARV
       arguments = vm.pop(calldata.argc)
       receiver = vm.pop
 
-      vm.push(
-        receiver.__send__(calldata.method, *arguments, **keywords, &block)
-      )
+      vm.push(receiver.__send__(calldata.method, *arguments, **keywords, &block))
     end
   end
 
