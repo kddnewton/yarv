@@ -16,7 +16,7 @@ module YARV
       $VERBOSE, previous = nil, $VERBOSE
 
       begin
-        YARV.compile_file(filepath)
+        YARV.compile_file(filepath).to_cfg
       ensure
         $VERBOSE = previous
       end

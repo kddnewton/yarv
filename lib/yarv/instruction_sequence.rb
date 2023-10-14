@@ -1004,8 +1004,7 @@ module YARV
     # This method will create a new instruction sequence from a serialized
     # RubyVM::InstructionSequence object.
     def self.from(source, options = Options.new, parent_iseq = nil)
-      iseq =
-        new(source[5], source[6], source[8], source[9], parent_iseq, options)
+      iseq = new(source[5], source[6], source[8], source[9], parent_iseq, options)
 
       # set up the labels object so that the labels are shared between the
       # location in the instruction sequence and the instructions that
