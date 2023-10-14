@@ -26,6 +26,12 @@ module YARV
     InstructionSequence.from(iseq.to_a)
   end
 
+  # Compile the given file into an InstructionSequence.
+  def self.compile_file(filepath, options = Options.new)
+    iseq = RubyVM::InstructionSequence.compile_file(filepath, **options)
+    InstructionSequence.from(iseq.to_a)
+  end
+
   # Compile and interpret the given source.
   def self.interpret(source, options = Options.new)
     VM.new.run_top_frame(compile(source, **options))
