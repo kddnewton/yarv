@@ -7,6 +7,7 @@ require "stringio"
 require_relative "yarv/options"
 require_relative "yarv/basic_block"
 require_relative "yarv/calldata"
+require_relative "yarv/compiler"
 require_relative "yarv/control_flow_graph"
 require_relative "yarv/data_flow_graph"
 require_relative "yarv/disassembler"
@@ -30,6 +31,13 @@ module YARV
   def self.compile_file(filepath, options = Options.new)
     iseq = RubyVM::InstructionSequence.compile_file(filepath, **options)
     InstructionSequence.from(iseq.to_a)
+  end
+
+  # Compile the given source using the Prism parser and compiler.
+  def self.compile_prism(source, options = Options.new)
+    require "prism"
+    result = Prism.parse(source, "<compiled>")
+    result.value.accept(Compiler.new(options, result.source.source.encoding))
   end
 
   # Compile and interpret the given source.

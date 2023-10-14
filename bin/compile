@@ -1,0 +1,21 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "bundler/setup"
+require "yarv"
+
+source = ARGV[0] == "-e" ? ARGV[1] : File.read(ARGV[0])
+options = YARV::Options.new(
+  frozen_string_literal: false,
+  inline_const_cache: false,
+  operands_unification: false,
+  peephole_optimization: false,
+  specialized_instruction: false,
+  tailcall_optimization: false
+)
+
+puts "=== YARV.compile_prism(source).disasm"
+puts YARV.compile_prism(source, options).disasm
+puts
+puts "=== RubyVM::InstructionSequence.compile(source).disasm"
+puts RubyVM::InstructionSequence.compile(source, **options).disasm

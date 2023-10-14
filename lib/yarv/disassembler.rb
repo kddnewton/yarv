@@ -92,7 +92,8 @@ module YARV
     end
 
     def label(value)
-      value.name["label_".length..]
+      name = value.name
+      name ? name["label_".length..] : "?"
     end
 
     def local(index, explicit: nil, implicit: nil)

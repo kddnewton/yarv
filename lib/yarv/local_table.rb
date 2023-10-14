@@ -52,6 +52,10 @@ module YARV
       Lookup.new(locals[index], index, level) if index
     end
 
+    def find!(name, level = 0)
+      find(name, level) || raise("Local variable #{name} not found")
+    end
+
     def has?(name)
       locals.any? { |local| local.name == name }
     end

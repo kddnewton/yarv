@@ -890,19 +890,19 @@ module YARV
         when TYPE_IVAR
           "ivar"
         when TYPE_LVAR
-          "lvar"
+          "local-variable"
         when TYPE_GVAR
-          "gvar"
+          "global-variable"
         when TYPE_CVAR
-          "cvar"
+          "class variable"
         when TYPE_CONST
           "const"
         when TYPE_METHOD
-          "method"
+          "func"
         when TYPE_YIELD
           "yield"
         when TYPE_ZSUPER
-          "zsuper"
+          "super"
         when TYPE_SELF
           "self"
         when TYPE_TRUE
@@ -912,7 +912,7 @@ module YARV
         when TYPE_ASGN
           "asgn"
         when TYPE_EXPR
-          "expr"
+          "expression"
         when TYPE_REF
           "ref"
         when TYPE_FUNC

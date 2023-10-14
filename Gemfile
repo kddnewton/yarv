@@ -6,4 +6,5 @@ gemspec
 
 gem "bundler"
 gem "minitest"
+gem "prism"
 gem "rake"
