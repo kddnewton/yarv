@@ -29,13 +29,15 @@ end
 module YARV
   class Compiler
     attr_reader :options, :encoding
-    attr_reader :iseq
+    attr_reader :iseq, :matched_label, :unmatched_label
 
     def initialize(options, encoding = Encoding::UTF_8)
       @options = options
       @encoding = encoding
 
       @iseq = nil
+      @matched_label = nil
+      @unmatched_label = nil
     end
 
     # alias foo bar
@@ -57,6 +59,27 @@ module YARV
       visit(node.old_name, true)
       iseq.send(YARV.calldata(:"core#set_variable_alias", 2), nil)
       iseq.pop unless used
+    end
+
+    # foo => bar | baz
+    #        ^^^^^^^^^
+    def visit_alternation_pattern_node(node, used)
+      left_match_label = iseq.label
+      right_label = iseq.label
+
+      iseq.dup
+      visit(node.left, used)
+      iseq.checkmatch(CheckMatch::VM_CHECKMATCH_TYPE_CASE)
+      iseq.branchif(left_match_label)
+      iseq.jump(right_label)
+
+      iseq.push(left_match_label)
+      iseq.pop
+      iseq.jump(@matched_label)
+
+      iseq.putnil
+      iseq.push(right_label)
+      visit(node.right, used)
     end
 
     # a and b
@@ -133,6 +156,11 @@ module YARV
         iseq.event(:RUBY_EVENT_B_RETURN)
         iseq.leave
       end
+    end
+
+    # def foo(&bar); end
+    #         ^^^^
+    def visit_block_parameter_node(node, used)
     end
 
     # A block's parameters.
@@ -364,6 +392,22 @@ module YARV
       iseq.getconstant(node.name) if used
     end
 
+    # Foo, = bar
+    # ^^^
+    def visit_constant_target_node(node, used)
+      iseq.putspecialobject(PutSpecialObject::OBJECT_CONST_BASE)
+      iseq.setconstant(node.name)
+    end
+
+    # Foo = 1
+    # ^^^^^^^
+    def visit_constant_write_node(node, used)
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.putspecialobject(PutSpecialObject::OBJECT_CONST_BASE)
+      iseq.setconstant(node.name)
+    end
+
     # Foo += bar
     # ^^^^^^^^^^^
     def visit_constant_operator_write_node(node, used)
@@ -435,6 +479,26 @@ module YARV
       end
 
       iseq.getconstant(node.child.name)
+    end
+
+    # Foo::Bar = 1
+    # ^^^^^^^^^^^^
+    def visit_constant_path_write_node(node, used)
+      if node.target.parent.nil?
+        iseq.putobject(Object)
+      else
+        visit(node.target.parent, true)
+      end
+
+      visit(node.value, true)
+
+      if used
+        iseq.swap
+        iseq.topn(1)
+      end
+
+      iseq.swap
+      iseq.setconstant(node.target.child.name)
     end
 
     # Foo::Bar += baz
@@ -975,6 +1039,17 @@ module YARV
       iseq.pop unless used
     end
 
+    # :"foo #{bar}"
+    # ^^^^^^^^^^^^^
+    def visit_interpolated_symbol_node(node, used)
+      visit_all(node.parts, true)
+      iseq.dup
+      iseq.objtostring(YARV.calldata(:to_s, 0, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE))
+      iseq.anytostring
+      iseq.concatstrings(node.parts.length)
+      iseq.intern
+    end
+
     # `foo #{bar}`
     # ^^^^^^^^^^^^
     def visit_interpolated_x_string_node(node, used)
@@ -1103,19 +1178,24 @@ module YARV
     # foo in bar
     # ^^^^^^^^^^
     def visit_match_predicate_node(node, used)
-      matched_label = iseq.label
-      unmatched_label = iseq.label
+      @matched_label, previous_matched_label = iseq.label, @matched_label
+      @unmatched_label, previous_unmatched_label = iseq.label, @unmatched_label
       done_label = iseq.label
 
       iseq.putnil
       visit(node.value, true)
       iseq.dup
       visit(node.pattern, true)
-      iseq.checkmatch(CheckMatch::VM_CHECKMATCH_TYPE_CASE)
-      iseq.branchif(matched_label)
-      iseq.jump(unmatched_label)
 
-      iseq.push(unmatched_label)
+      if node.pattern.is_a?(Prism::LocalVariableTargetNode)
+        iseq.jump(@matched_label)
+      else
+        iseq.checkmatch(CheckMatch::VM_CHECKMATCH_TYPE_CASE)
+        iseq.branchif(@matched_label)
+        iseq.jump(@unmatched_label)
+      end
+
+      iseq.push(@unmatched_label)
       iseq.pop
       iseq.pop
       iseq.putobject(false) if used
@@ -1123,12 +1203,13 @@ module YARV
 
       iseq.putnil
       iseq.putnil unless used
-      iseq.push(matched_label)
+      iseq.push(@matched_label)
       iseq.adjuststack(2)
       iseq.putobject(true) if used
       iseq.jump(done_label)
 
       iseq.push(done_label)
+      @matched_label, @unmatched_label = previous_matched_label, previous_unmatched_label
     end
 
     # /(?<foo>foo)/ =~ bar
@@ -1295,6 +1376,18 @@ module YARV
       end
     end
 
+    # foo => ^(bar)
+    #        ^^^^^^
+    def visit_pinned_expression_node(node, used)
+      visit(node.expression, true)
+    end
+
+    # foo = 1 and bar => ^foo
+    #                    ^^^^
+    def visit_pinned_variable_node(node, used)
+      visit(node.variable, true)
+    end
+
     # BEGIN {}
     def visit_pre_execution_node(node, used)
       if node.statements
@@ -1419,6 +1512,14 @@ module YARV
       iseq.argument_size += 1
       iseq.argument_options[:lead_num] ||= 0
       iseq.argument_options[:lead_num] += 1
+    end
+
+    # def foo(*bar); end
+    #         ^^^^
+    #
+    # def foo(*); end
+    #         ^
+    def visit_rest_parameter_node(node, used)
     end
 
     # self
