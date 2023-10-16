@@ -216,6 +216,42 @@ module YARV
       iseq.pop unless used
     end
 
+    # foo.bar += baz
+    # ^^^^^^^^^^^^^^^
+    #
+    # foo[bar] += baz
+    # ^^^^^^^^^^^^^^^
+    def visit_call_operator_write_node(node, used)
+      argc = node.arguments ? node.arguments.arguments.length : 0
+      iseq.putnil if argc > 0 && used
+
+      visit(node.receiver, true)
+
+      if argc > 0
+        visit(node.arguments, true)
+        iseq.dupn(argc + 1)
+      else
+        iseq.dup
+      end
+
+      iseq.send(YARV.calldata(node.read_name, argc), nil)
+
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+
+      if used
+        if argc > 0
+          iseq.setn(argc + 2)
+        else
+          iseq.swap
+          iseq.topn(1)
+        end
+      end
+    
+      iseq.send(YARV.calldata(node.write_name, 1 + argc), nil)
+      iseq.pop
+    end
+
     # foo.bar &&= baz
     # ^^^^^^^^^^^^^^^
     #
