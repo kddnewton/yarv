@@ -208,7 +208,7 @@ module YARV
         visit(node.block, true)
       end
 
-      flags |= CallData::CALL_ARGS_SIMPLE if flags == 0
+      flags |= CallData::CALL_ARGS_SIMPLE if flags == 0 && block_iseq.nil?
       flags |= CallData::CALL_FCALL if node.receiver.nil?
       flags |= CallData::CALL_VCALL if node.variable_call?
 
