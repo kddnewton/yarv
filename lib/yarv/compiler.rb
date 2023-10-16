@@ -66,6 +66,12 @@ module YARV
       visit(node.value, true)
     end
 
+    # $+
+    # ^^
+    def visit_back_reference_read_node(node, used)
+      iseq.getspecial(GetSpecial::SVAR_BACKREF, node.slice[1].ord << 1 | 1) if used
+    end
+
     # foo
     # ^^^
     #
@@ -147,6 +153,55 @@ module YARV
       visit(node.value, true)
       iseq.dup if used
       iseq.setclassvariable(node.name)
+    end
+
+    # @@foo += bar
+    # ^^^^^^^^^^^^
+    def visit_class_variable_operator_write_node(node, used)
+      iseq.getclassvariable(node.name)
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+      iseq.dup if used
+      iseq.setclassvariable(node.name)
+    end
+
+    # @@foo &&= bar
+    # ^^^^^^^^^^^^^
+    def visit_class_variable_and_write_node(node, used)
+      label = iseq.label
+
+      iseq.getclassvariable(node.name)
+      iseq.dup if used
+      iseq.branchunless(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setclassvariable(node.name)
+
+      iseq.push(label)
+    end
+
+    # @@foo ||= bar
+    # ^^^^^^^^^^^^^
+    def visit_class_variable_or_write_node(node, used)
+      defined_label = iseq.label
+      undefined_label = iseq.label
+
+      iseq.putnil
+      iseq.defined(Defined::TYPE_CVAR, node.name, true)
+      iseq.branchunless(defined_label)
+
+      iseq.getclassvariable(node.name)
+      iseq.dup if used
+      iseq.branchif(undefined_label)
+
+      iseq.pop if used
+      iseq.push(defined_label)
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setclassvariable(node.name)
+      iseq.push(undefined_label)
     end
 
     # Foo
@@ -308,6 +363,56 @@ module YARV
       iseq.setglobal(node.name)
     end
 
+    # $foo += bar
+    # ^^^^^^^^^^^
+    def visit_global_variable_operator_write_node(node, used)
+      iseq.getglobal(node.name)
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+      iseq.dup if used
+      iseq.setglobal(node.name)
+    end
+
+    # $foo &&= bar
+    # ^^^^^^^^^^^^
+    def visit_global_variable_and_write_node(node, used)
+      label = iseq.label
+
+      iseq.getglobal(node.name)
+      iseq.dup if used
+      iseq.branchunless(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setglobal(node.name)
+
+      iseq.push(label)
+    end
+
+    # $foo ||= bar
+    # ^^^^^^^^^^^^
+    def visit_global_variable_or_write_node(node, used)
+      defined_label = iseq.label
+      undefined_label = iseq.label
+
+      iseq.putnil
+      iseq.defined(Defined::TYPE_GVAR, node.name, true)
+      iseq.branchunless(defined_label)
+
+      iseq.getglobal(node.name)
+      iseq.dup if used
+      iseq.branchif(undefined_label)
+
+      iseq.pop if used
+      iseq.push(defined_label)
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setglobal(node.name)
+
+      iseq.push(undefined_label)
+    end
+
     # {}
     # ^^
     def visit_hash_node(node, used)
@@ -372,6 +477,50 @@ module YARV
       iseq.setinstancevariable(node.name)
     end
 
+    # @foo += bar
+    # ^^^^^^^^^^^
+    def visit_instance_variable_operator_write_node(node, used)
+      iseq.getinstancevariable(node.name)
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+      iseq.dup if used
+      iseq.setinstancevariable(node.name)
+    end
+
+    # @foo &&= bar
+    # ^^^^^^^^^^^^
+    def visit_instance_variable_and_write_node(node, used)
+      label = iseq.label
+
+      iseq.getinstancevariable(node.name)
+      iseq.dup if used
+      iseq.branchunless(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setinstancevariable(node.name)
+
+      iseq.push(label)
+    end
+
+    # @foo ||= bar
+    # ^^^^^^^^^^^^
+    def visit_instance_variable_or_write_node(node, used)
+      label = iseq.label
+
+      iseq.getinstancevariable(node.name)
+      iseq.dup if used
+      iseq.branchif(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setinstancevariable(node.name)
+
+      iseq.push(label)
+    end
+
     # 1
     # ^
     def visit_integer_node(node, used)
@@ -386,6 +535,30 @@ module YARV
       iseq.objtostring(YARV.calldata(:to_s, 0, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE))
       iseq.anytostring
       iseq.toregexp(node.options, node.parts.length)
+      iseq.pop unless used
+    end
+
+    # "foo #{bar}"
+    # ^^^^^^^^^^^^
+    def visit_interpolated_string_node(node, used)
+      visit_all(node.parts, true)
+      iseq.dup
+      iseq.objtostring(YARV.calldata(:to_s, 0, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE))
+      iseq.anytostring
+      iseq.concatstrings(node.parts.length)
+      iseq.pop unless used
+    end
+
+    # `foo #{bar}`
+    # ^^^^^^^^^^^^
+    def visit_interpolated_x_string_node(node, used)
+      iseq.putself
+      visit_all(node.parts, true)
+      iseq.dup
+      iseq.objtostring(YARV.calldata(:to_s, 0, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE))
+      iseq.anytostring
+      iseq.concatstrings(node.parts.length)
+      iseq.send(YARV.calldata(:`, 1), nil)
       iseq.pop unless used
     end
 
@@ -492,6 +665,13 @@ module YARV
       iseq.pop unless used
     end
 
+    # A node that is missing from the syntax tree. This is only used in the
+    # case of a syntax error. The parser gem doesn't have such a concept, so
+    # we invent our own here.
+    def visit_missing_node(node, used)
+      raise "Cannot compile missing nodes"
+    end
+
     # module Foo; end
     # ^^^^^^^^^^^^^^^
     def visit_module_node(node, used)
@@ -529,6 +709,12 @@ module YARV
     # ^^^
     def visit_nil_node(node, used)
       iseq.putnil if used
+    end
+
+    # $1
+    # ^^
+    def visit_numbered_reference_read_node(node, used)
+      iseq.getspecial(GetSpecial::SVAR_BACKREF, node.number << 1) if used
     end
 
     # def foo(bar = 1); end
