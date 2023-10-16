@@ -312,6 +312,67 @@ module YARV
       iseq.pop if argc == 0
     end
 
+    # foo.bar ||= baz
+    # ^^^^^^^^^^^^^^^
+    #
+    # foo[bar] ||= baz
+    # ^^^^^^^^^^^^^^^^
+    def visit_call_or_write_node(node, used)
+      defined_label = iseq.label
+      done_label = iseq.label
+
+      argc = node.arguments ? node.arguments.arguments.length : 0
+      iseq.putnil if argc > 0 && used
+
+      visit(node.receiver, true)
+
+      if argc > 0
+        visit(node.arguments, true)
+        iseq.dupn(argc + 1)
+      else
+        iseq.dup
+      end
+
+      iseq.send(YARV.calldata(node.read_name, argc), nil)
+
+      if used || argc > 0
+        iseq.dup
+        iseq.branchif(defined_label)
+      else
+        iseq.branchif(done_label)
+      end
+
+      iseq.pop if used || argc > 0
+      visit(node.value, true)
+
+      if used
+        if argc > 0
+          iseq.setn(argc + 2)
+        else
+          iseq.swap
+          iseq.topn(1)
+        end
+      end
+
+      iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
+      iseq.pop if argc > 0
+      iseq.jump(done_label)
+
+      if used || argc > 0
+        iseq.push(defined_label)
+
+        if argc > 0
+          iseq.setn(argc + 2) if used
+          iseq.adjuststack(argc + 2)
+        else
+          iseq.swap
+        end
+      end
+
+      iseq.push(done_label)
+      iseq.pop if argc == 0
+    end
+
     # case foo; when bar; end
     # ^^^^^^^^^^^^^^^^^^^^^^^
     #
