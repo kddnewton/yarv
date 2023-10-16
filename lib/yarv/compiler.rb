@@ -28,12 +28,12 @@ end
 
 module YARV
   class Compiler
-    attr_reader :options, :encoding
+    attr_reader :options, :result
     attr_reader :iseq, :matched_label, :unmatched_label
 
-    def initialize(options, encoding = Encoding::UTF_8)
+    def initialize(options, result)
       @options = options
-      @encoding = encoding
+      @result = result
 
       @iseq = nil
       @matched_label = nil
@@ -1717,13 +1717,19 @@ module YARV
     # __ENCODING__
     # ^^^^^^^^^^^^
     def visit_source_encoding_node(node, used)
-      iseq.putobject(encoding) if used
+      iseq.putobject(result.source.source.encoding) if used
     end
 
     # __FILE__
     # ^^^^^^^^
     def visit_source_file_node(node, used)
-      iseq.putstring(node.filepath) if used
+      return unless used
+
+      if result.magic_comments.any? { |magic_comment| magic_comment.key == "frozen_string_literal" && magic_comment.value.downcase == "true" }
+        iseq.putobject(node.filepath)
+      else
+        iseq.putstring(node.filepath)
+      end
     end
 
     # __LINE__
@@ -1753,7 +1759,13 @@ module YARV
     # "foo"
     # ^^^^^
     def visit_string_node(node, used)
-      iseq.putstring(node.unescaped) if used
+      return unless used
+
+      if node.frozen?
+        iseq.putobject(node.unescaped)
+      else
+        iseq.putstring(node.unescaped)
+      end
     end
 
     # :foo

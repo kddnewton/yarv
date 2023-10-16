@@ -37,7 +37,7 @@ module YARV
   def self.compile_prism(source, options = Options.new)
     require "prism"
     result = Prism.parse(source, "<compiled>")
-    result.value.accept(Compiler.new(options, result.source.source.encoding))
+    result.value.accept(Compiler.new(options, result))
   end
 
   # Compile and interpret the given source.
