@@ -276,6 +276,54 @@ module YARV
       iseq.pop if argc == 0
     end
 
+    # case foo; when bar; end
+    # ^^^^^^^^^^^^^^^^^^^^^^^
+    #
+    # case foo; in bar; end
+    # ^^^^^^^^^^^^^^^^^^^^^
+    def visit_case_node(node, used)
+      visit(node.predicate, true)
+
+      done_label = iseq.label
+      labels = []
+
+      node.conditions.each do |clause|
+        label = iseq.label
+
+        clause.conditions.each do |condition|
+          visit(condition, true)
+          iseq.topn(1)
+          iseq.send(YARV.calldata(:===, 1, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE), nil)
+          iseq.branchif(label)
+        end
+
+        labels << label
+      end
+
+      iseq.pop
+      if node.consequent
+        visit(node.consequent, used)
+      else
+        iseq.putnil if used
+      end
+      iseq.jump(done_label)
+
+      node.conditions.each_with_index do |clause, index|
+        iseq.push(labels[index])
+        iseq.pop
+
+        if clause.statements
+          visit(clause.statements, used)
+        else
+          iseq.putnil
+        end
+
+        iseq.jump(done_label)
+      end
+
+      iseq.push(done_label)
+    end
+
     # class Foo; end
     # ^^^^^^^^^^^^^^
     def visit_class_node(node, used)
@@ -1681,6 +1729,11 @@ module YARV
 
       iseq.putnil
       iseq.pop unless used
+    end
+
+    # case foo; when bar; end
+    #           ^^^^^^^^^^^^^
+    def visit_when_node(node, used)
     end
 
     # while foo; bar end
