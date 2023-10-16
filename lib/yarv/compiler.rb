@@ -183,6 +183,13 @@ module YARV
         iseq.putself
       end
 
+      safe_label = nil
+      if node.safe_navigation?
+        safe_label = iseq.label
+        iseq.dup
+        iseq.branchnil(safe_label)
+      end
+
       argc = 0
       flags = 0
 
@@ -213,6 +220,12 @@ module YARV
       flags |= CallData::CALL_VCALL if node.variable_call?
 
       iseq.send(YARV.calldata(node.name, argc, flags), block_iseq)
+
+      if safe_label
+        iseq.jump(safe_label)
+        iseq.push(safe_label)
+      end
+
       iseq.pop unless used
     end
 
