@@ -1399,6 +1399,11 @@ module YARV
       iseq.putnil if used
     end
 
+    # def foo(**nil); end
+    #         ^^^^^
+    def visit_no_keywords_parameter_node(node, used)
+    end
+
     # $1
     # ^^
     def visit_numbered_reference_read_node(node, used)
