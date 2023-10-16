@@ -1389,6 +1389,9 @@ module YARV
   # ~~~
   #
   class ExpandArray < Instruction
+    SPLAT_FLAG = 0x01
+    POSTARG_FLAG = 0x02
+
     attr_reader :number, :flags
 
     def initialize(number, flags)
@@ -1436,10 +1439,10 @@ module YARV
           [object]
         end
 
-      splat_flag = flags & 0x01 > 0
-      postarg_flag = flags & 0x02 > 0
+      splat_flag = flags & SPLAT_FLAG > 0
+      postarg_flag = flags & POSTARG_FLAG > 0
 
-      if number == 0 && splat_flag == 0
+      if number == 0 && !splat_flag
         # no space left on stack
       elsif postarg_flag
         values = []
@@ -5749,32 +5752,36 @@ module YARV
   # ~~~
   #
   class ToRegExp < Instruction
-    attr_reader :options, :length
+    attr_reader :options, :number
 
-    def initialize(options, length)
+    def initialize(options, number)
       @options = options
-      @length = length
+      @number = number
     end
 
     def disasm(fmt)
-      fmt.instruction("toregexp", [fmt.object(options), fmt.object(length)])
+      fmt.instruction("toregexp", [fmt.object(options), fmt.object(number)])
     end
 
     def to_a(_iseq)
-      [:toregexp, options, length]
+      [:toregexp, options, number]
     end
 
     def deconstruct_keys(_keys)
-      { options: options, length: length }
+      { options: options, number: number }
     end
 
     def ==(other)
       other.is_a?(ToRegExp) && other.options == options &&
-        other.length == length
+        other.number == number
+    end
+
+    def length
+      3
     end
 
     def pops
-      length
+      number
     end
 
     def pushes
@@ -5782,7 +5789,7 @@ module YARV
     end
 
     def call(vm)
-      vm.push(Regexp.new(vm.pop(length).join, options))
+      vm.push(Regexp.new(vm.pop(number).join, options))
     end
   end
 end

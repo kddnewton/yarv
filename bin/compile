@@ -14,8 +14,24 @@ options = YARV::Options.new(
   tailcall_optimization: false
 )
 
+prism = YARV.compile_prism(source, options)
+ruby = RubyVM::InstructionSequence.compile(source, **options)
+
 puts "=== YARV.compile_prism(source).disasm"
-puts YARV.compile_prism(source, options).disasm
+puts prism.disasm
 puts
 puts "=== RubyVM::InstructionSequence.compile(source).disasm"
-puts RubyVM::InstructionSequence.compile(source, **options).disasm
+puts ruby.disasm
+
+prism_insns = prism.insns
+ruby_insns = YARV::InstructionSequence.from(ruby.to_a, options).insns
+ruby_insns.select! { |insn| !insn.is_a?(Integer) && insn != :RUBY_EVENT_LINE }
+
+prism_insns.zip(ruby_insns).each do |(prism_insn, ruby_insn)|
+  if prism_insn != ruby_insn
+    puts
+    puts "expected: #{prism_insn.inspect}"
+    puts "actual: #{ruby_insn.inspect}"
+    break
+  end
+end

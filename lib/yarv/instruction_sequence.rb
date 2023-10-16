@@ -121,6 +121,10 @@ module YARV
       def inspect
         name.inspect
       end
+
+      def ==(other)
+        other.is_a?(Label) && name == other.name
+      end
     end
 
     # The name of the instruction sequence.
@@ -450,6 +454,17 @@ module YARV
           end
         end
       end
+    end
+
+    # This is a work in progress. We should be comparing many more fields than
+    # we currently are.
+    def ==(other)
+      return false unless other.is_a?(InstructionSequence)
+
+      current_insns = insns.select { |insn| !insn.is_a?(Integer) && insn != :RUBY_EVENT_LINE }
+      other_insns = other.insns.select { |insn| !insn.is_a?(Integer) && insn != :RUBY_EVENT_LINE }
+
+      current_insns == other_insns
     end
 
     ##########################################################################

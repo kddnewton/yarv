@@ -68,6 +68,14 @@ module YARV
       "<calldata!#{parts.join(", ")}>"
     end
 
+    def ==(other)
+      other.is_a?(CallData) &&
+        other.method == method &&
+        other.argc == argc &&
+        other.flags == flags &&
+        other.kw_arg == kw_arg
+    end
+
     def self.from(serialized)
       new(
         serialized[:mid],

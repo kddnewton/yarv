@@ -1,5 +1,31 @@
 # frozen_string_literal: true
 
+require "prism"
+
+module Prism
+  class InterpolatedMatchLastLineNode < Node
+    # Returns a numeric value that represents the flags that were used to create
+    # the regular expression.
+    def options
+      o = flags & (RegularExpressionFlags::IGNORE_CASE | RegularExpressionFlags::EXTENDED | RegularExpressionFlags::MULTI_LINE)
+      o |= Regexp::FIXEDENCODING if flags.anybits?(RegularExpressionFlags::EUC_JP | RegularExpressionFlags::WINDOWS_31J | RegularExpressionFlags::UTF_8)
+      o |= Regexp::NOENCODING if flags.anybits?(RegularExpressionFlags::ASCII_8BIT)
+      o
+    end
+  end
+
+  class MatchLastLineNode < Node
+    # Returns a numeric value that represents the flags that were used to create
+    # the regular expression.
+    def options
+      o = flags & (RegularExpressionFlags::IGNORE_CASE | RegularExpressionFlags::EXTENDED | RegularExpressionFlags::MULTI_LINE)
+      o |= Regexp::FIXEDENCODING if flags.anybits?(RegularExpressionFlags::EUC_JP | RegularExpressionFlags::WINDOWS_31J | RegularExpressionFlags::UTF_8)
+      o |= Regexp::NOENCODING if flags.anybits?(RegularExpressionFlags::ASCII_8BIT)
+      o
+    end
+  end
+end
+
 module YARV
   class Compiler
     attr_reader :options, :encoding
@@ -62,14 +88,56 @@ module YARV
     # { a: 1 }
     #   ^^^^
     def visit_assoc_node(node, used)
-      visit(node.key, true)
-      visit(node.value, true)
+      visit(node.key, used)
+      visit(node.value, used)
+    end
+
+    # def foo(**); bar(**); end
+    #                  ^^
+    #
+    # { **foo }
+    #   ^^^^^
+    def visit_assoc_splat_node(node, used)
+      visit(node.value, used)
     end
 
     # $+
     # ^^
     def visit_back_reference_read_node(node, used)
       iseq.getspecial(GetSpecial::SVAR_BACKREF, node.slice[1].ord << 1 | 1) if used
+    end
+
+    # foo(&bar)
+    #     ^^^^
+    def visit_block_argument_node(node, used)
+      visit(node.expression, used)
+    end
+
+    # foo { |; bar| }
+    #          ^^^
+    def visit_block_local_variable_node(node, used)
+    end
+
+    # A block on a keyword or method call.
+    def visit_block_node(node, used)
+      with_child_iseq(iseq.block_child_iseq(node.location.start_line)) do
+        iseq.event(:RUBY_EVENT_B_CALL)
+        visit(node.parameters, true) if node.parameters
+
+        if node.body
+          visit(node.body, true)
+        else
+          iseq.putnil
+        end
+
+        iseq.event(:RUBY_EVENT_B_RETURN)
+        iseq.leave
+      end
+    end
+
+    # A block's parameters.
+    def visit_block_parameters_node(node, used)
+      visit(node.parameters, used) if node.parameters
     end
 
     # foo
@@ -88,18 +156,96 @@ module YARV
       end
 
       argc = 0
+      flags = 0
+
       if node.arguments
         argc = node.arguments.arguments.length
         visit(node.arguments, true)
+
+        node.arguments.arguments.each do |argument|
+          if argument.is_a?(Prism::ForwardingArgumentsNode)
+            flags |= CallData::CALL_ARGS_SPLAT
+            flags |= CallData::CALL_ARGS_BLOCKARG
+          end
+        end
       end
 
-      flags = 0
+      block_iseq = nil
+
+      case node.block&.type
+      when :block_node
+        block_iseq = visit_block_node(node.block, true)
+      when :block_argument_node
+        flags |= CallData::CALL_ARGS_BLOCKARG
+        visit(node.block, true)
+      end
+
+      flags |= CallData::CALL_ARGS_SIMPLE if flags == 0
       flags |= CallData::CALL_FCALL if node.receiver.nil?
       flags |= CallData::CALL_VCALL if node.variable_call?
-      flags |= CallData::CALL_ARGS_SIMPLE
 
-      iseq.send(YARV.calldata(node.name, argc, flags), nil)
+      iseq.send(YARV.calldata(node.name, argc, flags), block_iseq)
       iseq.pop unless used
+    end
+
+    # foo.bar &&= baz
+    # ^^^^^^^^^^^^^^^
+    #
+    # foo[bar] &&= baz
+    # ^^^^^^^^^^^^^^^^
+    def visit_call_and_write_node(node, used)
+      defined_label = iseq.label
+      done_label = iseq.label
+
+      argc = node.arguments ? node.arguments.arguments.length : 0
+      iseq.putnil if argc > 0 && used
+
+      visit(node.receiver, true)
+      visit(node.arguments, true) if argc > 0
+
+      if argc > 0
+        iseq.dupn(argc + 1)
+      else
+        iseq.dup
+      end
+
+      iseq.send(YARV.calldata(node.read_name, argc), nil)
+
+      if used || argc > 0
+        iseq.dup
+        iseq.branchunless(defined_label)
+        iseq.pop
+      else
+        iseq.branchunless(done_label)
+      end
+
+      visit(node.value, true)
+
+      if used
+        if argc > 0
+          iseq.setn(argc + 2)
+        else
+          iseq.swap
+          iseq.topn(1)
+        end
+      end
+
+      iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
+      iseq.pop if argc > 0
+      iseq.jump(done_label)
+      iseq.push(defined_label) if used || argc > 0
+
+      if used || argc > 0
+        if argc > 0
+          iseq.setn(argc + 2) if used
+          iseq.adjuststack(argc + 2)
+        else
+          iseq.swap
+        end
+      end
+
+      iseq.push(done_label)
+      iseq.pop if argc == 0
     end
 
     # class Foo; end
@@ -145,6 +291,12 @@ module YARV
     # ^^^^^
     def visit_class_variable_read_node(node, used)
       iseq.getclassvariable(node.name) if used
+    end
+
+    # @@foo, = bar
+    # ^^^^^
+    def visit_class_variable_target_node(node, used)
+      iseq.setclassvariable(node.name)
     end
 
     # @@foo = 1
@@ -212,16 +364,176 @@ module YARV
       iseq.getconstant(node.name) if used
     end
 
+    # Foo += bar
+    # ^^^^^^^^^^^
+    def visit_constant_operator_write_node(node, used)
+      iseq.putnil
+      iseq.putobject(true)
+      iseq.getconstant(node.name)
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+      iseq.dup if used
+      iseq.putspecialobject(PutSpecialObject::OBJECT_CONST_BASE)
+      iseq.setconstant(node.name)
+    end
+
+    # Foo &&= bar
+    # ^^^^^^^^^^^^
+    def visit_constant_and_write_node(node, used)
+      label = iseq.label
+
+      iseq.putnil
+      iseq.putobject(true)
+      iseq.getconstant(node.name)
+      iseq.dup if used
+      iseq.branchunless(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.putspecialobject(PutSpecialObject::OBJECT_CONST_BASE)
+      iseq.setconstant(node.name)
+
+      iseq.push(label)
+    end
+
+    # Foo ||= bar
+    # ^^^^^^^^^^^^
+    def visit_constant_or_write_node(node, used)
+      defined_label = iseq.label
+      done_label = iseq.label
+
+      iseq.putnil
+      iseq.defined(Defined::TYPE_CONST, node.name, true)
+      iseq.branchunless(defined_label)
+
+      iseq.putnil
+      iseq.putobject(true)
+      iseq.getconstant(node.name)
+      iseq.dup if used
+      iseq.branchif(done_label)
+
+      iseq.pop if used
+      iseq.push(defined_label)
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.putspecialobject(PutSpecialObject::OBJECT_CONST_BASE)
+      iseq.setconstant(node.name)
+
+      iseq.push(done_label)
+    end
+
     # Foo::Bar
     # ^^^^^^^^
     def visit_constant_path_node(node, used)
       if node.parent.nil?
         iseq.putobject(Object)
+        iseq.putobject(true)
       else
-        visit(node.parent, true)
+        visit(node.parent, used)
+        iseq.putobject(false)
       end
 
-      visit(node.child, true)
+      iseq.getconstant(node.child.name)
+    end
+
+    # Foo::Bar += baz
+    # ^^^^^^^^^^^^^^^
+    def visit_constant_path_operator_write_node(node, used)
+      if node.target.parent
+        visit(node.target.parent, true)
+      else
+        iseq.putobject(Object)
+      end
+      
+      iseq.dup
+      iseq.putobject(true)
+      iseq.getconstant(node.target.child.name)
+
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE), nil)
+      iseq.swap
+
+      if used
+        iseq.topn(1)
+        iseq.swap
+      end
+
+      iseq.setconstant(node.target.child.name)
+    end
+
+    # Foo::Bar &&= baz
+    # ^^^^^^^^^^^^^^^^
+    def visit_constant_path_and_write_node(node, used)
+      defined_label = iseq.label
+
+      if node.target.parent
+        visit(node.target.parent, true)
+      else
+        iseq.putobject(Object)
+      end
+      
+      iseq.dup
+      iseq.putobject(true)
+      iseq.getconstant(node.target.child.name)
+      iseq.dup if used
+      iseq.branchunless(defined_label)
+
+      iseq.pop if used
+      visit(node.value, true)
+
+      if used
+        iseq.dupn(2)
+        iseq.swap
+      else
+        iseq.topn(1)
+      end
+
+      iseq.setconstant(node.target.child.name)
+
+      iseq.push(defined_label)
+      iseq.swap if used
+      iseq.pop
+    end
+
+    # Foo::Bar ||= baz
+    # ^^^^^^^^^^^^^^^^
+    def visit_constant_path_or_write_node(node, used)
+      undefined_label = iseq.label
+      defined_label = iseq.label
+
+      if node.target.parent
+        visit(node.target.parent, true)
+      else
+        iseq.putobject(Object)
+      end
+      
+      iseq.dup
+      iseq.defined(Defined::TYPE_CONST_FROM, node.target.child.name, true)
+      iseq.branchunless(undefined_label)
+
+      iseq.dup
+      iseq.putobject(true)
+      iseq.getconstant(node.target.child.name)
+      iseq.dup if used
+      iseq.branchif(defined_label)
+
+      iseq.pop if used
+      iseq.push(undefined_label)
+      visit(node.value, true)
+
+      if used
+        iseq.dupn(2)
+        iseq.swap
+      else
+        iseq.topn(1)
+      end
+
+      iseq.setconstant(node.target.child.name)
+
+      iseq.push(defined_label)
+      iseq.swap if used
+      iseq.pop
     end
 
     # def foo; end
@@ -234,13 +546,23 @@ module YARV
       method_iseq = iseq.method_child_iseq(name.to_s, node.location.start_line)
 
       with_child_iseq(method_iseq) do
+        node.locals.each do |local|
+          if local == :"..."
+            iseq.local_table.plain(:*)
+            iseq.local_table.block(:&)
+          end
+          iseq.local_table.plain(local.name)
+        end
+
         visit(node.parameters, true) if node.parameters
+        iseq.event(:RUBY_EVENT_CALL)
+
         if node.body
-          iseq.event(:RUBY_EVENT_CALL)
           visit(node.body, true)
         else
           iseq.putnil
         end
+
         iseq.event(:RUBY_EVENT_RETURN)
         iseq.leave
       end
@@ -305,10 +627,22 @@ module YARV
       end
     end
 
+    # if foo then bar else baz end
+    #                 ^^^^^^^^^^^^
+    def visit_else_node(node, used)
+      visit(node.statements, used)
+    end
+
     # "foo #{bar}"
     #      ^^^^^^
     def visit_embedded_statements_node(node, used)
       visit(node.statements, used)
+    end
+
+    # "foo #@bar"
+    #      ^^^^^
+    def visit_embedded_variable_node(node, used)
+      visit(node.variable, used)
     end
 
     # false
@@ -349,10 +683,60 @@ module YARV
       iseq.send(YARV.calldata(:each, 0, 0), block_iseq)
     end
 
+    # def foo(...); bar(...); end
+    #                   ^^^
+    def visit_forwarding_arguments_node(node, used)
+      current_iseq = iseq
+      depth = 0
+
+      until current_iseq.local_table.has?(:*)
+        current_iseq = current_iseq.parent_iseq
+        depth += 1
+      end
+
+      lookup = find_local!(:*, depth)
+      iseq.getlocal(lookup.index, lookup.level)
+      iseq.splatarray(false)
+
+      lookup = find_local!(:&, depth)
+      iseq.getblockparamproxy(lookup.index, lookup.level)
+    end
+
+    # def foo(...); end
+    #         ^^^
+    def visit_forwarding_parameter_node(node, used)
+    end
+
+    # super
+    # ^^^^^
+    #
+    # super {}
+    # ^^^^^^^^
+    def visit_forwarding_super_node(node, used)
+      flags = CallData::CALL_FCALL | CallData::CALL_SUPER | CallData::CALL_ZSUPER
+
+      block_iseq = nil
+      if node.block
+        block_iseq = visit_block_node(node.block, true)
+      else
+        flags |= CallData::CALL_ARGS_SIMPLE
+      end
+
+      iseq.putself
+      iseq.invokesuper(YARV.calldata(nil, 0, flags), block_iseq)
+      iseq.pop unless used
+    end
+
     # $foo
     # ^^^^
     def visit_global_variable_read_node(node, used)
       iseq.getglobal(node.name) if used
+    end
+
+    # $foo, = bar
+    # ^^^^
+    def visit_global_variable_target_node(node, used)
+      iseq.setglobal(node.name)
     end
 
     # $foo = 1
@@ -416,8 +800,32 @@ module YARV
     # {}
     # ^^
     def visit_hash_node(node, used)
-      visit_all(node.elements, used)
-      iseq.newhash(node.elements.length * 2) if used
+      length = 0
+
+      node.elements.each do |element|
+        if element.is_a?(Prism::AssocSplatNode)
+          if used
+            if length > 0
+              iseq.newhash(length)
+              iseq.putspecialobject(PutSpecialObject::OBJECT_VMCORE)
+              iseq.swap
+            else
+              iseq.putspecialobject(PutSpecialObject::OBJECT_VMCORE)
+              iseq.newhash(length)
+            end
+
+            length = 0
+          end
+
+          visit(element, used)
+          iseq.send(YARV.calldata(:"core#hash_merge_kwd", 2), nil) if used
+        else
+          visit(element, used)
+          length += 2
+        end
+      end
+
+      iseq.newhash(node.elements.length * 2) if used && length > 0
     end
 
     # if foo then bar end
@@ -467,6 +875,12 @@ module YARV
     # ^^^^
     def visit_instance_variable_read_node(node, used)
       iseq.getinstancevariable(node.name) if used
+    end
+
+    # @foo, = bar
+    # ^^^^
+    def visit_instance_variable_target_node(node, used)
+      iseq.setinstancevariable(node.name)
     end
 
     # @foo = 1
@@ -527,6 +941,18 @@ module YARV
       iseq.putobject(node.value) if used
     end
 
+    # if /foo #{bar}/ then end
+    #    ^^^^^^^^^^^^
+    def visit_interpolated_match_last_line_node(node, used)
+      visit_all(node.parts, true)
+      iseq.dup
+      iseq.objtostring(YARV.calldata(:to_s, 0, CallData::CALL_FCALL | CallData::CALL_ARGS_SIMPLE))
+      iseq.anytostring
+      iseq.toregexp(node.options, node.parts.length)
+      iseq.getglobal(:$_)
+      iseq.send(YARV.calldata(:=~, 1), nil)
+    end
+
     # /foo #{bar}/
     # ^^^^^^^^^^^^
     def visit_interpolated_regular_expression_node(node, used)
@@ -562,11 +988,46 @@ module YARV
       iseq.pop unless used
     end
 
+    # -> {}
+    # ^^^^^
+    def visit_lambda_node(node, used)
+      lambda_iseq = iseq.block_child_iseq(node.location.start_line)
+
+      with_child_iseq(lambda_iseq) do
+        iseq.event(:RUBY_EVENT_B_CALL)
+        visit(node.parameters, true) if node.parameters
+
+        node.locals.each do |local|
+          iseq.local_table.plain(local)
+        end
+
+        if node.body
+          visit(node.body, true)
+        else
+          iseq.putnil
+        end
+
+        iseq.event(:RUBY_EVENT_B_RETURN)
+        iseq.leave
+      end
+
+      iseq.putspecialobject(PutSpecialObject::OBJECT_VMCORE)
+      iseq.send(YARV.calldata(:lambda, 0, CallData::CALL_FCALL), lambda_iseq)
+      iseq.pop unless used
+    end
+
     # foo
     # ^^^
     def visit_local_variable_read_node(node, used)
-      lookup = iseq.local_table.find!(node.name, node.depth)
+      lookup = find_local!(node.name, node.depth)
       iseq.getlocal(lookup.index, lookup.level) if used
+    end
+
+    # foo, = bar
+    # ^^^
+    def visit_local_variable_target_node(node, used)
+      lookup = find_local!(node.name, node.depth)
+      iseq.setlocal(lookup.index, lookup.level)
     end
 
     # foo = 1
@@ -575,18 +1036,68 @@ module YARV
       visit(node.value, true)
       iseq.dup if used
 
-      lookup = iseq.local_table.find!(node.name, node.depth)
+      lookup = find_local!(node.name, node.depth)
       iseq.setlocal(lookup.index, lookup.level)
     end
 
-    # foo, = bar
-    # ^^^
-    def visit_local_variable_target_node(node, used)
-      current_iseq = iseq
-      node.depth.times { current_iseq = current_iseq.parent_iseq }
-
-      lookup = current_iseq.local_table.find!(node.name, node.depth)
+    # foo += bar
+    # ^^^^^^^^^^
+    def visit_local_variable_operator_write_node(node, used)
+      lookup = find_local!(node.name, node.depth)
+      iseq.getlocal(lookup.index, lookup.level)
+      visit(node.value, true)
+      iseq.send(YARV.calldata(node.operator, 1), nil)
+      iseq.dup if used
       iseq.setlocal(lookup.index, lookup.level)
+    end
+
+    # foo &&= bar
+    # ^^^^^^^^^^^
+    def visit_local_variable_and_write_node(node, used)
+      label = iseq.label
+
+      lookup = find_local!(node.name, node.depth)
+      iseq.getlocal(lookup.index, lookup.level)
+      iseq.dup if used
+      iseq.branchunless(label)
+
+      iseq.pop if used
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setlocal(lookup.index, lookup.level)
+
+      iseq.push(label)
+    end
+
+    # foo ||= bar
+    # ^^^^^^^^^^^
+    def visit_local_variable_or_write_node(node, used)
+      defined_label = iseq.label
+      done_label = iseq.label
+
+      iseq.putobject(true)
+      iseq.branchunless(defined_label)
+
+      lookup = find_local!(node.name, node.depth)
+      iseq.getlocal(lookup.index, lookup.level)
+      iseq.dup if used
+      iseq.branchif(done_label)
+
+      iseq.pop if used
+      iseq.push(defined_label)
+      visit(node.value, true)
+      iseq.dup if used
+      iseq.setlocal(lookup.index, lookup.level)
+
+      iseq.push(done_label)
+    end
+
+    # if /foo/ then end
+    #    ^^^^^
+    def visit_match_last_line_node(node, used)
+      iseq.putobject(Regexp.new(node.unescaped, node.options))
+      iseq.getspecial(GetSpecial::SVAR_LASTLINE, 0)
+      iseq.send(YARV.calldata(:=~, 1), nil)
     end
 
     # foo in bar
@@ -705,6 +1216,18 @@ module YARV
       iseq.pop unless used
     end
 
+    # foo, bar = baz
+    # ^^^^^^^^^^^^^^
+    def visit_multi_write_node(node, used)
+      targets = [*node.targets]
+      targets.pop if targets.last.is_a?(Prism::SplatNode) && targets.last.operator == ","
+
+      visit(node.value, used)
+      iseq.dup
+      iseq.expandarray(targets.length, 0)
+      visit_all(targets, true)
+    end
+
     # nil
     # ^^^
     def visit_nil_node(node, used)
@@ -772,9 +1295,18 @@ module YARV
       end
     end
 
-   # END {}
-   # ^^^^^^
-   def visit_post_execution_node(node, used)
+    # BEGIN {}
+    def visit_pre_execution_node(node, used)
+      if node.statements
+        visit(node.statements, used)
+      else
+        iseq.putnil if used
+      end
+    end
+
+    # END {}
+    # ^^^^^^
+    def visit_post_execution_node(node, used)
       start_line = node.location.start_line
       once_iseq = iseq.block_child_iseq(start_line)
 
@@ -815,7 +1347,32 @@ module YARV
         if node.statements.nil?
           iseq.putnil
         else
-          visit(node.statements, true)
+          statements = [*node.statements.body]
+
+          # We need to do some preprocessing here to grab up all of the BEGIN{}
+          # nodes. We could do this instead by manipulating our linked list of
+          # instructions, but it's easier to just do it here.
+          preexes = []
+          index = 0
+
+          while index < statements.length
+            statement = statements[index]
+            if statement.is_a?(Prism::PreExecutionNode)
+              preexes << statements.delete_at(index)
+            else
+              index += 1
+            end
+          end
+
+          visit_all(preexes, false)
+
+          if statements.empty?
+            iseq.putnil
+          else
+            *first_statements, last_statement = statements
+            visit_all(first_statements, false)
+            visit(last_statement, true)
+          end
         end
 
         iseq.leave
@@ -870,6 +1427,30 @@ module YARV
       iseq.putself if used
     end
 
+    # class << self; end
+    # ^^^^^^^^^^^^^^^^^^
+    def visit_singleton_class_node(node, used)
+      visit(node.expression, true)
+      iseq.putnil
+
+      singleton_iseq = iseq.singleton_class_child_iseq(node.location.start_line)
+      with_child_iseq(singleton_iseq) do
+        iseq.event(:RUBY_EVENT_CLASS)
+
+        if node.body
+          visit(node.body, true)
+        else
+          iseq.putnil
+        end
+
+        iseq.event(:RUBY_EVENT_END)
+        iseq.leave
+      end
+
+      iseq.defineclass(:singletonclass, singleton_iseq, DefineClass::TYPE_SINGLETON_CLASS)
+      iseq.pop unless used
+    end
+
     # __ENCODING__
     # ^^^^^^^^^^^^
     def visit_source_encoding_node(node, used)
@@ -886,6 +1467,17 @@ module YARV
     # ^^^^^^^^
     def visit_source_line_node(node, used)
       iseq.putobject(node.location.start_line) if used
+    end
+
+    # foo(*bar)
+    #     ^^^^
+    #
+    # def foo((bar, *baz)); end
+    #               ^^^^
+    #
+    # def foo(*); bar(*); end
+    #                 ^
+    def visit_splat_node(node, used)
     end
 
     # A list of statements.
@@ -911,6 +1503,54 @@ module YARV
     # ^^^^
     def visit_true_node(node, used)
       iseq.putobject(true) if used
+    end
+
+    # undef foo
+    # ^^^^^^^^^
+    def visit_undef_node(node, used)
+      node.names.each do |name|
+        iseq.putspecialobject(PutSpecialObject::OBJECT_VMCORE)
+        iseq.putspecialobject(PutSpecialObject::OBJECT_CBASE)
+        visit(name, true)
+        iseq.send(YARV.calldata(:"core#undef_method", 2), nil)
+        iseq.pop unless used
+      end
+    end
+
+    # unless foo; bar end
+    # ^^^^^^^^^^^^^^^^^^^
+    #
+    # bar unless foo
+    # ^^^^^^^^^^^^^^
+    def visit_unless_node(node, used)
+      body_label = iseq.label
+      else_label = iseq.label
+      done_label = iseq.label
+
+      visit(node.predicate, true)
+      iseq.branchunless(body_label)
+      iseq.jump(else_label)
+
+      iseq.push(else_label)
+
+      if node.consequent
+        visit(node.consequent, used)
+      else
+        iseq.putnil if used
+      end
+
+      iseq.jump(done_label)
+
+      iseq.pop if used
+      iseq.push(body_label)
+
+      if node.statements
+        visit(node.statements, used)
+      else
+        iseq.putnil if used
+      end
+
+      iseq.push(done_label)
     end
 
     # until foo; bar end
@@ -980,7 +1620,30 @@ module YARV
       iseq.pop unless used
     end
 
+    # yield
+    # ^^^^^
+    #
+    # yield 1
+    # ^^^^^^^
+    def visit_yield_node(node, used)
+      argc = 0
+
+      if node.arguments
+        visit(node.arguments, true)
+        argc = node.arguments.arguments.length
+      end
+
+      iseq.invokeblock(YARV.calldata(nil, argc))
+      iseq.pop unless used
+    end
+
     private
+
+    def find_local!(name, depth)
+      current_iseq = iseq
+      depth.times { current_iseq = current_iseq.parent_iseq }
+      current_iseq.local_table.find!(name, depth)
+    end
 
     # Visit a node.
     def visit(node, used)
