@@ -15,4 +15,6 @@ ObjectSpace.each_object(Prism::Node.singleton_class) do |cls|
   unimplemented << type unless implemented.include?(type)
 end
 
+puts "%3d unimplemented nodes" % unimplemented.size
+puts "======================="
 puts unimplemented.sort
