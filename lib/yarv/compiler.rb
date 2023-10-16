@@ -144,6 +144,10 @@ module YARV
     # A block on a keyword or method call.
     def visit_block_node(node, used)
       with_child_iseq(iseq.block_child_iseq(node.location.start_line)) do
+        node.locals.each do |local|
+          iseq.local_table.plain(local)
+        end
+
         iseq.event(:RUBY_EVENT_B_CALL)
         visit(node.parameters, true) if node.parameters
 
@@ -192,15 +196,20 @@ module YARV
 
       argc = 0
       flags = 0
+      kw_arg = nil
 
       if node.arguments
         argc = node.arguments.arguments.length
         visit(node.arguments, true)
 
         node.arguments.arguments.each do |argument|
-          if argument.is_a?(Prism::ForwardingArgumentsNode)
+          case argument.type
+          when :forwarding_arguments_node
             flags |= CallData::CALL_ARGS_SPLAT
             flags |= CallData::CALL_ARGS_BLOCKARG
+          when :keyword_hash_node
+            flags |= CallData::CALL_KWARG
+            kw_arg = argument.elements.map { |element| element.key.unescaped.to_sym }
           end
         end
       end
@@ -219,7 +228,7 @@ module YARV
       flags |= CallData::CALL_FCALL if node.receiver.nil?
       flags |= CallData::CALL_VCALL if node.variable_call?
 
-      iseq.send(YARV.calldata(node.name, argc, flags), block_iseq)
+      iseq.send(YARV.calldata(node.name, argc, flags, kw_arg), block_iseq)
 
       if safe_label
         iseq.jump(safe_label)
@@ -1219,6 +1228,14 @@ module YARV
       iseq.concatstrings(node.parts.length)
       iseq.send(YARV.calldata(:`, 1), nil)
       iseq.pop unless used
+    end
+
+    # foo(bar: baz)
+    #     ^^^^^^^^
+    def visit_keyword_hash_node(node, used)
+      node.elements.each do |element|
+        visit(element.value, used)
+      end
     end
 
     # -> {}
