@@ -1556,7 +1556,6 @@ module YARV
     # def foo(bar); end
     #         ^^^
     def visit_required_parameter_node(node, used)
-      iseq.local_table.plain(node.name)
       iseq.argument_size += 1
       iseq.argument_options[:lead_num] ||= 0
       iseq.argument_options[:lead_num] += 1
