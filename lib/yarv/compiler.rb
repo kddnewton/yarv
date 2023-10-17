@@ -283,55 +283,60 @@ module YARV
       defined_label = iseq.label
       done_label = iseq.label
 
-      argc = node.arguments ? node.arguments.arguments.length : 0
-      iseq.putnil if argc > 0 && used
+      if node.arguments
+        argc = node.arguments.arguments.length
 
-      visit(node.receiver, true)
-      visit(node.arguments, true) if argc > 0
-
-      if argc > 0
+        iseq.putnil if used
+        visit(node.receiver, true)
+        visit(node.arguments, true)
         iseq.dupn(argc + 1)
-      else
-        iseq.dup
-      end
-
-      iseq.send(YARV.calldata(node.read_name, argc), nil)
-
-      if used || argc > 0
+        iseq.send(YARV.calldata(node.read_name, argc), nil)
         iseq.dup
         iseq.branchunless(defined_label)
+
         iseq.pop
+        visit(node.value, true)
+        iseq.setn(argc + 2) if used
+        iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
+        iseq.pop
+        iseq.jump(done_label)
+
+        iseq.push(defined_label)
+        iseq.setn(argc + 2) if used
+        iseq.adjuststack(argc + 2)
+
+        iseq.push(done_label)
       else
-        iseq.branchunless(done_label)
-      end
+        visit(node.receiver, true)
+        iseq.dup
+        iseq.send(YARV.calldata(node.read_name), nil)
 
-      visit(node.value, true)
-
-      if used
-        if argc > 0
-          iseq.setn(argc + 2)
+        if used
+          iseq.dup
+          iseq.branchunless(defined_label)
+          iseq.pop
         else
+          iseq.branchunless(done_label)
+        end
+
+        visit(node.value, true)
+
+        if used
           iseq.swap
           iseq.topn(1)
         end
-      end
 
-      iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
-      iseq.pop if argc > 0
-      iseq.jump(done_label)
-      iseq.push(defined_label) if used || argc > 0
+        iseq.send(YARV.calldata(node.write_name, 1), nil)
+        iseq.jump(done_label)
 
-      if used || argc > 0
-        if argc > 0
-          iseq.setn(argc + 2) if used
-          iseq.adjuststack(argc + 2)
-        else
+        if used
+          iseq.push(defined_label)
           iseq.swap
         end
-      end
 
-      iseq.push(done_label)
-      iseq.pop if argc == 0
+        iseq.push(done_label)
+        iseq.pop
+      end
     end
 
     # foo.bar ||= baz
@@ -343,56 +348,60 @@ module YARV
       defined_label = iseq.label
       done_label = iseq.label
 
-      argc = node.arguments ? node.arguments.arguments.length : 0
-      iseq.putnil if argc > 0 && used
+      if node.arguments
+        argc = node.arguments.arguments.length
 
-      visit(node.receiver, true)
-
-      if argc > 0
+        iseq.putnil if used
+        visit(node.receiver, true)
         visit(node.arguments, true)
         iseq.dupn(argc + 1)
-      else
-        iseq.dup
-      end
-
-      iseq.send(YARV.calldata(node.read_name, argc), nil)
-
-      if used || argc > 0
+        iseq.send(YARV.calldata(node.read_name, argc), nil)
         iseq.dup
         iseq.branchif(defined_label)
+
+        iseq.pop
+        visit(node.value, true)
+        iseq.setn(argc + 2) if used
+        iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
+        iseq.pop
+        iseq.jump(done_label)
+
+        iseq.push(defined_label)
+        iseq.setn(argc + 2) if used
+        iseq.adjuststack(argc + 2)
+
+        iseq.push(done_label)
       else
-        iseq.branchif(done_label)
-      end
+        visit(node.receiver, true)
+        iseq.dup
+        iseq.send(YARV.calldata(node.read_name), nil)
 
-      iseq.pop if used || argc > 0
-      visit(node.value, true)
-
-      if used
-        if argc > 0
-          iseq.setn(argc + 2)
+        if used
+          iseq.dup
+          iseq.branchif(defined_label)
         else
+          iseq.branchif(done_label)
+        end
+
+        iseq.pop if used
+        visit(node.value, true)
+
+        if used
           iseq.swap
           iseq.topn(1)
         end
-      end
 
-      iseq.send(YARV.calldata(node.write_name, argc + 1), nil)
-      iseq.pop if argc > 0
-      iseq.jump(done_label)
+        iseq.send(YARV.calldata(node.write_name, 1), nil)
+        iseq.jump(done_label)
 
-      if used || argc > 0
-        iseq.push(defined_label)
-
-        if argc > 0
-          iseq.setn(argc + 2) if used
-          iseq.adjuststack(argc + 2)
-        else
+        if used
+          iseq.push(defined_label)
           iseq.swap
         end
-      end
 
-      iseq.push(done_label)
-      iseq.pop if argc == 0
+        iseq.push(done_label)
+        iseq.pop
+      end
     end
 
     # case foo; when bar; end
