@@ -491,9 +491,9 @@ module YARV
       frame.nesting.last
     end
 
-    def frame_at(level)
+    def frame_at(depth)
       current = frame
-      level.times { current = current.parent }
+      depth.times { current = current.parent }
       current
     end
 
@@ -521,12 +521,12 @@ module YARV
       Leave.new(pop)
     end
 
-    def local_get(index, level)
-      stack[frame_at(level).stack_index + index]
+    def local_get(index, depth)
+      stack[frame_at(depth).stack_index + index]
     end
 
-    def local_set(index, level, value)
-      stack[frame_at(level).stack_index + index] = value
+    def local_set(index, depth, value)
+      stack[frame_at(depth).stack_index + index] = value
     end
 
     ##########################################################################

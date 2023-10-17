@@ -191,11 +191,11 @@ module YARV
     # Query methods
     ##########################################################################
 
-    def local_variable(name, level = 0)
-      if (lookup = local_table.find(name, level))
+    def local_variable(name, depth = 0)
+      if (lookup = local_table.find(name, depth))
         lookup
       elsif parent_iseq
-        parent_iseq.local_variable(name, level + 1)
+        parent_iseq.local_variable(name, depth + 1)
       end
     end
 
@@ -740,12 +740,12 @@ module YARV
       push(ExpandArray.new(length, flags))
     end
 
-    def getblockparam(index, level)
-      push(GetBlockParam.new(index, level))
+    def getblockparam(index, depth)
+      push(GetBlockParam.new(index, depth))
     end
 
-    def getblockparamproxy(index, level)
-      push(GetBlockParamProxy.new(index, level))
+    def getblockparamproxy(index, depth)
+      push(GetBlockParamProxy.new(index, depth))
     end
 
     def getclassvariable(name)
@@ -772,22 +772,22 @@ module YARV
       end
     end
 
-    def getlocal(index, level)
+    def getlocal(index, depth)
       if options.operands_unification?
-        # Specialize the getlocal instruction based on the level of the
+        # Specialize the getlocal instruction based on the depth of the
         # local variable. If it's 0 or 1, then there's a specialized
         # instruction that will look at the current scope or the parent
         # scope, respectively, and requires fewer operands.
-        case level
+        case depth
         when 0
           push(GetLocalWC0.new(index))
         when 1
           push(GetLocalWC1.new(index))
         else
-          push(GetLocal.new(index, level))
+          push(GetLocal.new(index, depth))
         end
       else
-        push(GetLocal.new(index, level))
+        push(GetLocal.new(index, depth))
       end
     end
 
@@ -945,8 +945,8 @@ module YARV
       push(Send.new(calldata, block_iseq))
     end
 
-    def setblockparam(index, level)
-      push(SetBlockParam.new(index, level))
+    def setblockparam(index, depth)
+      push(SetBlockParam.new(index, depth))
     end
 
     def setclassvariable(name)
@@ -973,22 +973,22 @@ module YARV
       end
     end
 
-    def setlocal(index, level)
+    def setlocal(index, depth)
       if options.operands_unification?
-        # Specialize the setlocal instruction based on the level of the
+        # Specialize the setlocal instruction based on the depth of the
         # local variable. If it's 0 or 1, then there's a specialized
         # instruction that will write to the current scope or the parent
         # scope, respectively, and requires fewer operands.
-        case level
+        case depth
         when 0
           push(SetLocalWC0.new(index))
         when 1
           push(SetLocalWC1.new(index))
         else
-          push(SetLocal.new(index, level))
+          push(SetLocal.new(index, depth))
         end
       else
-        push(SetLocal.new(index, level))
+        push(SetLocal.new(index, depth))
       end
     end
 
@@ -1110,29 +1110,29 @@ module YARV
           iseq.expandarray(opnds[0], opnds[1])
         when :getblockparam, :getblockparamproxy, :getlocal, :getlocal_WC_0, :getlocal_WC_1, :setblockparam, :setlocal, :setlocal_WC_0, :setlocal_WC_1
           current = iseq
-          level = 0
+          depth = 0
 
           case type
           when :getlocal_WC_1, :setlocal_WC_1
-            level = 1
+            depth = 1
           when :getblockparam, :getblockparamproxy, :getlocal, :setblockparam, :setlocal
-            level = opnds[1]
+            depth = opnds[1]
           end
 
-          level.times { current = current.parent_iseq }
+          depth.times { current = current.parent_iseq }
           index = current.local_table.size - opnds[0] + 2
 
           case type
           when :getblockparam
-            iseq.getblockparam(index, level)
+            iseq.getblockparam(index, depth)
           when :getblockparamproxy
-            iseq.getblockparamproxy(index, level)
+            iseq.getblockparamproxy(index, depth)
           when :getlocal, :getlocal_WC_0, :getlocal_WC_1
-            iseq.getlocal(index, level)
+            iseq.getlocal(index, depth)
           when :setblockparam
-            iseq.setblockparam(index, level)
+            iseq.setblockparam(index, depth)
           when :setlocal, :setlocal_WC_0, :setlocal_WC_1
-            iseq.setlocal(index, level)
+            iseq.setlocal(index, depth)
           end
         when :getclassvariable
           iseq.push(GetClassVariable.new(opnds[0], opnds[1]))

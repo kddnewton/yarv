@@ -1486,30 +1486,30 @@ module YARV
   # ~~~
   #
   class GetBlockParam < Instruction
-    attr_reader :index, :level
+    attr_reader :index, :depth
 
-    def initialize(index, level)
+    def initialize(index, depth)
       @index = index
-      @level = level
+      @depth = depth
     end
 
     def disasm(fmt)
-      fmt.instruction("getblockparam", [fmt.local(index, explicit: level)])
+      fmt.instruction("getblockparam", [fmt.local(index, explicit: depth)])
     end
 
     def to_a(iseq)
       current = iseq
-      level.times { current = iseq.parent_iseq }
-      [:getblockparam, current.local_table.offset(index), level]
+      depth.times { current = iseq.parent_iseq }
+      [:getblockparam, current.local_table.offset(index), depth]
     end
 
     def deconstruct_keys(_keys)
-      { index: index, level: level }
+      { index: index, depth: depth }
     end
 
     def ==(other)
       other.is_a?(GetBlockParam) && other.index == index &&
-        other.level == level
+        other.depth == depth
     end
 
     def length
@@ -1521,7 +1521,7 @@ module YARV
     end
 
     def call(vm)
-      vm.push(vm.local_get(index, level))
+      vm.push(vm.local_get(index, depth))
     end
   end
 
@@ -1541,33 +1541,33 @@ module YARV
   # ~~~
   #
   class GetBlockParamProxy < Instruction
-    attr_reader :index, :level
+    attr_reader :index, :depth
 
-    def initialize(index, level)
+    def initialize(index, depth)
       @index = index
-      @level = level
+      @depth = depth
     end
 
     def disasm(fmt)
       fmt.instruction(
         "getblockparamproxy",
-        [fmt.local(index, explicit: level)]
+        [fmt.local(index, explicit: depth)]
       )
     end
 
     def to_a(iseq)
       current = iseq
-      level.times { current = iseq.parent_iseq }
-      [:getblockparamproxy, current.local_table.offset(index), level]
+      depth.times { current = iseq.parent_iseq }
+      [:getblockparamproxy, current.local_table.offset(index), depth]
     end
 
     def deconstruct_keys(_keys)
-      { index: index, level: level }
+      { index: index, depth: depth }
     end
 
     def ==(other)
       other.is_a?(GetBlockParamProxy) && other.index == index &&
-        other.level == level
+        other.depth == depth
     end
 
     def length
@@ -1579,7 +1579,7 @@ module YARV
     end
 
     def call(vm)
-      vm.push(vm.local_get(index, level))
+      vm.push(vm.local_get(index, depth))
     end
   end
 
@@ -1816,7 +1816,7 @@ module YARV
   # ### Summary
   #
   # `getlocal` fetches the value of a local variable from a frame determined
-  # by the level and index arguments. The level is the number of frames back
+  # by the depth and index arguments. The depth is the number of frames back
   # to look and the index is the index in the local table. It pushes the value
   # it finds onto the stack.
   #
@@ -1828,29 +1828,29 @@ module YARV
   # ~~~
   #
   class GetLocal < Instruction
-    attr_reader :index, :level
+    attr_reader :index, :depth
 
-    def initialize(index, level)
+    def initialize(index, depth)
       @index = index
-      @level = level
+      @depth = depth
     end
 
     def disasm(fmt)
-      fmt.instruction("getlocal", [fmt.local(index, explicit: level)])
+      fmt.instruction("getlocal", [fmt.local(index, explicit: depth)])
     end
 
     def to_a(iseq)
       current = iseq
-      level.times { current = current.parent_iseq }
-      [:getlocal, current.local_table.offset(index), level]
+      depth.times { current = current.parent_iseq }
+      [:getlocal, current.local_table.offset(index), depth]
     end
 
     def deconstruct_keys(_keys)
-      { index: index, level: level }
+      { index: index, depth: depth }
     end
 
     def ==(other)
-      other.is_a?(GetLocal) && other.index == index && other.level == level
+      other.is_a?(GetLocal) && other.index == index && other.depth == depth
     end
 
     def length
@@ -1862,7 +1862,7 @@ module YARV
     end
 
     def call(vm)
-      vm.push(vm.local_get(index, level))
+      vm.push(vm.local_get(index, depth))
     end
   end
 
@@ -4944,7 +4944,7 @@ module YARV
   # ### Summary
   #
   # `setblockparam` sets the value of a block local variable on a frame
-  # determined by the level and index arguments. The level is the number of
+  # determined by the depth and index arguments. The depth is the number of
   # frames back to look and the index is the index in the local table. It pops
   # the value it is setting off the stack.
   #
@@ -4957,30 +4957,30 @@ module YARV
   # ~~~
   #
   class SetBlockParam < Instruction
-    attr_reader :index, :level
+    attr_reader :index, :depth
 
-    def initialize(index, level)
+    def initialize(index, depth)
       @index = index
-      @level = level
+      @depth = depth
     end
 
     def disasm(fmt)
-      fmt.instruction("setblockparam", [fmt.local(index, explicit: level)])
+      fmt.instruction("setblockparam", [fmt.local(index, explicit: depth)])
     end
 
     def to_a(iseq)
       current = iseq
-      level.times { current = current.parent_iseq }
-      [:setblockparam, current.local_table.offset(index), level]
+      depth.times { current = current.parent_iseq }
+      [:setblockparam, current.local_table.offset(index), depth]
     end
 
     def deconstruct_keys(_keys)
-      { index: index, level: level }
+      { index: index, depth: depth }
     end
 
     def ==(other)
       other.is_a?(SetBlockParam) && other.index == index &&
-        other.level == level
+        other.depth == depth
     end
 
     def length
@@ -4992,7 +4992,7 @@ module YARV
     end
 
     def call(vm)
-      vm.local_set(index, level, vm.pop)
+      vm.local_set(index, depth, vm.pop)
     end
   end
 
@@ -5210,7 +5210,7 @@ module YARV
   # ### Summary
   #
   # `setlocal` sets the value of a local variable on a frame determined by the
-  # level and index arguments. The level is the number of frames back to
+  # depth and index arguments. The depth is the number of frames back to
   # look and the index is the index in the local table. It pops the value it
   # is setting off the stack.
   #
@@ -5222,29 +5222,29 @@ module YARV
   # ~~~
   #
   class SetLocal < Instruction
-    attr_reader :index, :level
+    attr_reader :index, :depth
 
-    def initialize(index, level)
+    def initialize(index, depth)
       @index = index
-      @level = level
+      @depth = depth
     end
 
     def disasm(fmt)
-      fmt.instruction("setlocal", [fmt.local(index, explicit: level)])
+      fmt.instruction("setlocal", [fmt.local(index, explicit: depth)])
     end
 
     def to_a(iseq)
       current = iseq
-      level.times { current = current.parent_iseq }
-      [:setlocal, current.local_table.offset(index), level]
+      depth.times { current = current.parent_iseq }
+      [:setlocal, current.local_table.offset(index), depth]
     end
 
     def deconstruct_keys(_keys)
-      { index: index, level: level }
+      { index: index, depth: depth }
     end
 
     def ==(other)
-      other.is_a?(SetLocal) && other.index == index && other.level == level
+      other.is_a?(SetLocal) && other.index == index && other.depth == depth
     end
 
     def length
@@ -5256,7 +5256,7 @@ module YARV
     end
 
     def call(vm)
-      vm.local_set(index, level, vm.pop)
+      vm.local_set(index, depth, vm.pop)
     end
   end
 

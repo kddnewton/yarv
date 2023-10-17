@@ -28,12 +28,12 @@ module YARV
 
     # The result of looking up a local variable in the current local table.
     class Lookup
-      attr_reader :local, :index, :level
+      attr_reader :local, :index, :depth
 
-      def initialize(local, index, level)
+      def initialize(local, index, depth)
         @local = local
         @index = index
-        @level = level
+        @depth = depth
       end
     end
 
@@ -47,13 +47,13 @@ module YARV
       locals.empty?
     end
 
-    def find(name, level = 0)
+    def find(name, depth = 0)
       index = locals.index { |local| local.name == name }
-      Lookup.new(locals[index], index, level) if index
+      Lookup.new(locals[index], index, depth) if index
     end
 
-    def find!(name, level = 0)
-      find(name, level) || raise("Local variable #{name} not found")
+    def find!(name, depth = 0)
+      find(name, depth) || raise("Local variable #{name} not found")
     end
 
     def has?(name)

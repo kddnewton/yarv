@@ -935,11 +935,11 @@ module YARV
       end
 
       lookup = find_local!(:*, depth)
-      iseq.getlocal(lookup.index, lookup.level)
+      iseq.getlocal(lookup.index, lookup.depth)
       iseq.splatarray(false)
 
       lookup = find_local!(:&, depth)
-      iseq.getblockparamproxy(lookup.index, lookup.level)
+      iseq.getblockparamproxy(lookup.index, lookup.depth)
     end
 
     # def foo(...); end
@@ -1279,14 +1279,14 @@ module YARV
     # ^^^
     def visit_local_variable_read_node(node, used)
       lookup = find_local!(node.name, node.depth)
-      iseq.getlocal(lookup.index, lookup.level) if used
+      iseq.getlocal(lookup.index, lookup.depth) if used
     end
 
     # foo, = bar
     # ^^^
     def visit_local_variable_target_node(node, used)
       lookup = find_local!(node.name, node.depth)
-      iseq.setlocal(lookup.index, lookup.level)
+      iseq.setlocal(lookup.index, lookup.depth)
     end
 
     # foo = 1
@@ -1296,18 +1296,18 @@ module YARV
       iseq.dup if used
 
       lookup = find_local!(node.name, node.depth)
-      iseq.setlocal(lookup.index, lookup.level)
+      iseq.setlocal(lookup.index, lookup.depth)
     end
 
     # foo += bar
     # ^^^^^^^^^^
     def visit_local_variable_operator_write_node(node, used)
       lookup = find_local!(node.name, node.depth)
-      iseq.getlocal(lookup.index, lookup.level)
+      iseq.getlocal(lookup.index, lookup.depth)
       visit(node.value, true)
       iseq.send(YARV.calldata(node.operator, 1), nil)
       iseq.dup if used
-      iseq.setlocal(lookup.index, lookup.level)
+      iseq.setlocal(lookup.index, lookup.depth)
     end
 
     # foo &&= bar
@@ -1316,14 +1316,14 @@ module YARV
       label = iseq.label
 
       lookup = find_local!(node.name, node.depth)
-      iseq.getlocal(lookup.index, lookup.level)
+      iseq.getlocal(lookup.index, lookup.depth)
       iseq.dup if used
       iseq.branchunless(label)
 
       iseq.pop if used
       visit(node.value, true)
       iseq.dup if used
-      iseq.setlocal(lookup.index, lookup.level)
+      iseq.setlocal(lookup.index, lookup.depth)
 
       iseq.push(label)
     end
@@ -1338,7 +1338,7 @@ module YARV
       iseq.branchunless(defined_label)
 
       lookup = find_local!(node.name, node.depth)
-      iseq.getlocal(lookup.index, lookup.level)
+      iseq.getlocal(lookup.index, lookup.depth)
       iseq.dup if used
       iseq.branchif(done_label)
 
@@ -1346,7 +1346,7 @@ module YARV
       iseq.push(defined_label)
       visit(node.value, true)
       iseq.dup if used
-      iseq.setlocal(lookup.index, lookup.level)
+      iseq.setlocal(lookup.index, lookup.depth)
 
       iseq.push(done_label)
     end
@@ -1415,7 +1415,7 @@ module YARV
 
         iseq.push(unmatched_label)
         lookup = iseq.local_table.find!(local, 0)
-        iseq.setlocal(lookup.index, lookup.level)
+        iseq.setlocal(lookup.index, lookup.depth)
       else
         node.locals.each_with_index do |local, index|
           iseq.dup if index != node.locals.length - 1
@@ -1423,7 +1423,7 @@ module YARV
           iseq.send(YARV.calldata(:[], 1), nil)
 
           lookup = iseq.local_table.find!(local, 0)
-          iseq.setlocal(lookup.index, lookup.level)
+          iseq.setlocal(lookup.index, lookup.depth)
         end
         iseq.jump(matched_label)
 
@@ -1433,7 +1433,7 @@ module YARV
         node.locals.each do |local|
           iseq.putnil
           lookup = iseq.local_table.find!(local, 0)
-          iseq.setlocal(lookup.index, lookup.level)
+          iseq.setlocal(lookup.index, lookup.depth)
         end
       end
 
@@ -1617,7 +1617,7 @@ module YARV
       iseq.pop unless used
     end
 
-    # The top-level program node.
+    # The top-depth program node.
     def visit_program_node(node)
       top_iseq = InstructionSequence.new("<compiled>", "<compiled>", node.location.start_line, :top, nil, options)
 
