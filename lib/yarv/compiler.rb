@@ -685,7 +685,7 @@ module YARV
       else
         iseq.putobject(Object)
       end
-      
+
       iseq.dup
       iseq.putobject(true)
       iseq.getconstant(node.target.child.name)
@@ -712,7 +712,7 @@ module YARV
       else
         iseq.putobject(Object)
       end
-      
+
       iseq.dup
       iseq.putobject(true)
       iseq.getconstant(node.target.child.name)
@@ -747,7 +747,7 @@ module YARV
       else
         iseq.putobject(Object)
       end
-      
+
       iseq.dup
       iseq.defined(Defined::TYPE_CONST_FROM, node.target.child.name, true)
       iseq.branchunless(undefined_label)
@@ -1095,7 +1095,13 @@ module YARV
       iseq.jump(done_label)
       iseq.pop if used
       iseq.push(else_label)
-      iseq.putnil if used
+
+      if node.consequent
+        visit(node.consequent, used)
+      else
+        iseq.putnil if used
+      end
+
       iseq.push(done_label)
     end
 
