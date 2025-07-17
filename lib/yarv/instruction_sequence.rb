@@ -247,19 +247,23 @@ module YARV
       dumped_options = argument_options.dup
       dumped_options[:opt].map!(&:name) if dumped_options[:opt]
 
+      metadata = {
+        arg_size: argument_size,
+        local_size: local_table.size,
+        stack_max: stack.maximum_size,
+        node_id: -1,
+        node_ids: [-1] * insns.length
+      }
+
+      metadata[:parser] = :prism if RUBY_VERSION >= "3.3"
+
       # Next, return the instruction sequence as an array.
       [
         MAGIC,
         versions[0],
         versions[1],
         1,
-        {
-          arg_size: argument_size,
-          local_size: local_table.size,
-          stack_max: stack.maximum_size,
-          node_id: -1,
-          node_ids: [-1] * insns.length
-        },
+        metadata,
         name,
         file,
         "<compiled>",
@@ -394,8 +398,7 @@ module YARV
         when Send
           calldata = value.calldata
 
-          if !value.block_iseq &&
-                !calldata.flag?(CallData::CALL_ARGS_BLOCKARG)
+          if !value.block_iseq && !calldata.flag?(CallData::CALL_ARGS_BLOCKARG)
             # Specialize the send instruction. If it doesn't have a block
             # attached, then we will replace it with an opt_send_without_block
             # and do further specializations based on the called method and
@@ -528,13 +531,7 @@ module YARV
 
     class CatchEnsure < CatchEntry
       def to_a
-        [
-          :ensure,
-          iseq.to_a,
-          begin_label.name,
-          end_label.name,
-          exit_label.name
-        ]
+        [:ensure, iseq.to_a, begin_label.name, end_label.name, exit_label.name]
       end
     end
 
@@ -552,13 +549,7 @@ module YARV
 
     class CatchRescue < CatchEntry
       def to_a
-        [
-          :rescue,
-          iseq.to_a,
-          begin_label.name,
-          end_label.name,
-          exit_label.name
-        ]
+        [:rescue, iseq.to_a, begin_label.name, end_label.name, exit_label.name]
       end
     end
 
@@ -693,6 +684,10 @@ module YARV
 
     def concatstrings(number)
       push(ConcatStrings.new(number))
+    end
+
+    def concattoarray(object)
+      push(ConcatToArray.new(object))
     end
 
     def defineclass(name, class_iseq, flags)
@@ -907,6 +902,14 @@ module YARV
       push(Pop.new)
     end
 
+    def pushtoarraykwsplat
+      push(PushToArrayKwSplat.new)
+    end
+
+    def putchilledstring(object)
+      push(PutChilledString.new(object))
+    end
+
     def putnil
       push(PutNil.new)
     end
@@ -1088,6 +1091,8 @@ module YARV
           iseq.concatarray
         when :concatstrings
           iseq.concatstrings(opnds[0])
+        when :concattoarray
+          iseq.concattoarray(opnds[0])
         when :defineclass
           iseq.defineclass(opnds[0], from(opnds[1], options, iseq), opnds[2])
         when :defined
@@ -1189,12 +1194,17 @@ module YARV
           iseq.newarray(opnds[0])
           iseq.send(YARV.calldata(:min))
         when :opt_newarray_send
+          mid = opnds[1]
+          if RUBY_VERSION >= "3.4"
+            mid = %i[max min hash pack pack_buffer include?][mid - 1]
+          end
+
           iseq.newarray(opnds[0])
-          iseq.send(CallData.new(opnds[1]))
+          iseq.send(CallData.new(mid))
         when :opt_neq
-          iseq.push(OptNEq.new(CallData.from(opnds[0]), CallData.from(opnds[1])))
-        when :opt_reverse
-          iseq.opt_reverse(opnds[0])
+          iseq.push(
+            OptNEq.new(CallData.from(opnds[0]), CallData.from(opnds[1]))
+          )
         when :opt_setinlinecache
           iseq.opt_setinlinecache(opnds[0])
         when :opt_str_freeze
@@ -1205,6 +1215,10 @@ module YARV
           iseq.send(YARV.calldata(:-@))
         when :pop
           iseq.pop
+        when :pushtoarraykwsplat
+          iseq.pushtoarraykwsplat
+        when :putchilledstring
+          iseq.putchilledstring(opnds[0])
         when :putnil
           iseq.putnil
         when :putobject

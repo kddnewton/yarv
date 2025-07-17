@@ -758,6 +758,59 @@ module YARV
 
   # ### Summary
   #
+  # `concattoarray` pops a single value off the stack and attempts to concat
+  # it to the Array on top of the stack. If the value is not an Array, it
+  # will be coerced into one.
+  #
+  # ### Usage
+  #
+  # ~~~ruby
+  # [1, *2]
+  # ~~~
+  #
+  class ConcatToArray < Instruction
+    attr_reader :object
+
+    def initialize(object)
+      @object = object
+    end
+
+    def disasm(fmt)
+      fmt.instruction("concattoarray", [fmt.object(object)])
+    end
+
+    def to_a(_iseq)
+      [:concattoarray, object]
+    end
+
+    def deconstruct_keys(_keys)
+      { object: object }
+    end
+
+    def ==(other)
+      other.is_a?(ConcatToArray) && other.object == object
+    end
+
+    def length
+      2
+    end
+
+    def pops
+      1
+    end
+
+    def pushes
+      1
+    end
+
+    def call(vm)
+      array, value = vm.pop(2)
+      vm.push(array.concat(Array(value)))
+    end
+  end
+
+  # ### Summary
+  #
   # `defineclass` defines a class. First it pops the superclass off the
   # stack, then it pops the object off the stack that the class should be
   # defined under. It has three arguments: the name of the constant, the
@@ -890,19 +943,19 @@ module YARV
         when TYPE_IVAR
           "ivar"
         when TYPE_LVAR
-          "local-variable"
+          "lvar"
         when TYPE_GVAR
-          "global-variable"
+          "gvar"
         when TYPE_CVAR
-          "class variable"
+          "cvar"
         when TYPE_CONST
           "const"
         when TYPE_METHOD
-          "func"
+          "method"
         when TYPE_YIELD
           "yield"
         when TYPE_ZSUPER
-          "super"
+          "zsuper"
         when TYPE_SELF
           "self"
         when TYPE_TRUE
@@ -912,7 +965,7 @@ module YARV
         when TYPE_ASGN
           "asgn"
         when TYPE_EXPR
-          "expression"
+          "expr"
         when TYPE_REF
           "ref"
         when TYPE_FUNC
@@ -1032,8 +1085,8 @@ module YARV
     end
 
     def ==(other)
-      other.is_a?(DefinedIVar) && other.name == name &&
-        other.cache == cache && other.message == message
+      other.is_a?(DefinedIVar) && other.name == name && other.cache == cache &&
+        other.message == message
     end
 
     def length
@@ -1389,9 +1442,6 @@ module YARV
   # ~~~
   #
   class ExpandArray < Instruction
-    SPLAT_FLAG = 0x01
-    POSTARG_FLAG = 0x02
-
     attr_reader :number, :flags
 
     def initialize(number, flags)
@@ -1412,8 +1462,7 @@ module YARV
     end
 
     def ==(other)
-      other.is_a?(ExpandArray) && other.number == number &&
-        other.flags == flags
+      other.is_a?(ExpandArray) && other.number == number && other.flags == flags
     end
 
     def length
@@ -1439,10 +1488,10 @@ module YARV
           [object]
         end
 
-      splat_flag = flags & SPLAT_FLAG > 0
-      postarg_flag = flags & POSTARG_FLAG > 0
+      splat_flag = flags & 0x01 > 0
+      postarg_flag = flags & 0x02 > 0
 
-      if number == 0 && !splat_flag
+      if number == 0 && splat_flag == 0
         # no space left on stack
       elsif postarg_flag
         values = []
@@ -1508,8 +1557,7 @@ module YARV
     end
 
     def ==(other)
-      other.is_a?(GetBlockParam) && other.index == index &&
-        other.depth == depth
+      other.is_a?(GetBlockParam) && other.index == index && other.depth == depth
     end
 
     def length
@@ -4160,60 +4208,6 @@ module YARV
 
   # ### Summary
   #
-  # `opt_reverse` is an optimization that the peephole optimizer performs to
-  # reverse a variable number of elements on the top of the stack.
-  #
-  # ### Usage
-  #
-  # ~~~ruby
-  # a.a, b.b, c.c = d, e; nil
-  # ~~~
-  class OptReverse < Instruction
-    attr_reader :number
-
-    def initialize(number)
-      @number = number
-    end
-
-    def disasm(fmt)
-      fmt.instruction("opt_reverse", [fmt.object(number)])
-    end
-
-    def to_a(_iseq)
-      [:opt_reverse, number]
-    end
-
-    def deconstruct_keys(_keys)
-      { number: number }
-    end
-
-    def ==(other)
-      other.is_a?(OptReverse) && other.number == number
-    end
-
-    def length
-      2
-    end
-
-    def pops
-      number
-    end
-
-    def pushes
-      number
-    end
-
-    def canonical
-      self
-    end
-
-    def call(vm)
-      vm.push(*vm.pop(number).reverse)
-    end
-  end
-
-  # ### Summary
-  #
   # `opt_send_without_block` is a specialization of the send instruction that
   # occurs when a method is being called without a block. It pops the receiver
   # and the arguments off the stack and pushes on the result.
@@ -4530,6 +4524,52 @@ module YARV
 
   # ### Summary
   #
+  # `pushtoarraykwsplat` is used to append a hash literal that is being
+  # splatted onto an array.
+  #
+  # ### Usage
+  #
+  # ~~~ruby
+  # ["string", **{ foo: "bar" }]
+  # ~~~
+  #
+  class PushToArrayKwSplat < Instruction
+    def disasm(fmt)
+      fmt.instruction("pushtoarraykwsplat")
+    end
+
+    def to_a(_iseq)
+      [:pushtoarraykwsplat]
+    end
+
+    def deconstruct_keys(_keys)
+      {}
+    end
+
+    def ==(other)
+      other.is_a?(PushToArrayKwSplat)
+    end
+
+    def length
+      2
+    end
+
+    def pops
+      2
+    end
+
+    def pushes
+      1
+    end
+
+    def call(vm)
+      array, hash = vm.pop(2)
+      vm.push(array << hash)
+    end
+  end
+
+  # ### Summary
+  #
   # `putnil` pushes a global nil object onto the stack.
   #
   # ### Usage
@@ -4817,6 +4857,54 @@ module YARV
 
   # ### Summary
   #
+  # `putchilledstring` pushes an unfrozen string literal onto the stack that
+  # acts like a frozen string. This is a migration path to frozen string
+  # literals as the default in the future.
+  #
+  # ### Usage
+  #
+  # ~~~ruby
+  # "foo"
+  # ~~~
+  #
+  class PutChilledString < Instruction
+    attr_reader :object
+
+    def initialize(object)
+      @object = object
+    end
+
+    def disasm(fmt)
+      fmt.instruction("putchilledstring", [fmt.object(object)])
+    end
+
+    def to_a(_iseq)
+      [:putchilledstring, object]
+    end
+
+    def deconstruct_keys(_keys)
+      { object: object }
+    end
+
+    def ==(other)
+      other.is_a?(PutChilledString) && other.object == object
+    end
+
+    def length
+      2
+    end
+
+    def pushes
+      1
+    end
+
+    def call(vm)
+      vm.push(object.dup)
+    end
+  end
+
+  # ### Summary
+  #
   # `putstring` pushes an unfrozen string literal onto the stack.
   #
   # ### Usage
@@ -4937,7 +5025,9 @@ module YARV
       arguments = vm.pop(calldata.argc)
       receiver = vm.pop
 
-      vm.push(receiver.__send__(calldata.method, *arguments, **keywords, &block))
+      vm.push(
+        receiver.__send__(calldata.method, *arguments, **keywords, &block)
+      )
     end
   end
 
@@ -4979,8 +5069,7 @@ module YARV
     end
 
     def ==(other)
-      other.is_a?(SetBlockParam) && other.index == index &&
-        other.depth == depth
+      other.is_a?(SetBlockParam) && other.index == index && other.depth == depth
     end
 
     def length
@@ -5752,36 +5841,32 @@ module YARV
   # ~~~
   #
   class ToRegExp < Instruction
-    attr_reader :options, :number
+    attr_reader :options, :length
 
-    def initialize(options, number)
+    def initialize(options, length)
       @options = options
-      @number = number
+      @length = length
     end
 
     def disasm(fmt)
-      fmt.instruction("toregexp", [fmt.object(options), fmt.object(number)])
+      fmt.instruction("toregexp", [fmt.object(options), fmt.object(length)])
     end
 
     def to_a(_iseq)
-      [:toregexp, options, number]
+      [:toregexp, options, length]
     end
 
     def deconstruct_keys(_keys)
-      { options: options, number: number }
+      { options: options, length: length }
     end
 
     def ==(other)
       other.is_a?(ToRegExp) && other.options == options &&
-        other.number == number
-    end
-
-    def length
-      3
+        other.length == length
     end
 
     def pops
-      number
+      length
     end
 
     def pushes
@@ -5789,7 +5874,7 @@ module YARV
     end
 
     def call(vm)
-      vm.push(Regexp.new(vm.pop(number).join, options))
+      vm.push(Regexp.new(vm.pop(length).join, options))
     end
   end
 end
